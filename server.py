@@ -4,13 +4,23 @@ import asyncio
 from typing import Dict, Any, List, Optional, AsyncGenerator
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import StreamingResponse, HTMLResponse
+from fastapi.middleware.cors import CORSMiddleware
 import boto3
 from pydantic import BaseModel
 
 app = FastAPI(
     title="Alexa+ AWS Bedrock Multi-Surface Orchestrator MCP",
-    version="1.2.0",
-    description="Streamable HTTP MCP Server connecting Alexa+ to AWS Bedrock Agentic Workflows with interactive visual testing UI."
+    version="1.3.0",
+    description="Full-spec Streamable HTTP MCP Server connecting Alexa+ to AWS Bedrock Agentic Workflows with Tools, Prompts, Resources, and Visual Simulator UI."
+)
+
+# Enable CORS for external MCP inspectors and web clients
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Initialize AWS Bedrock Runtime client
@@ -22,6 +32,7 @@ bedrock_runtime = boto3.client(
 # In-memory session store
 SESSION_STORE: Dict[str, List[Dict[str, str]]] = {}
 
+# 1. MCP Tools Schema
 AVAILABLE_TOOLS = [
     {
         "name": "query_bedrock_agent",
@@ -61,6 +72,39 @@ AVAILABLE_TOOLS = [
             },
             "required": ["target_device", "action"]
         }
+    }
+]
+
+# 2. MCP Prompts Schema (2025-11-25 Spec)
+AVAILABLE_PROMPTS = [
+    {
+        "name": "smart_home_routine_assistant",
+        "description": "Pre-configured system prompt template for ambient multi-device orchestration routines.",
+        "arguments": [
+            {"name": "time_of_day", "description": "Current time block (e.g., morning, night)", "required": True},
+            {"name": "user_location", "description": "Primary room location", "required": False}
+        ]
+    },
+    {
+        "name": "security_sweep_audit",
+        "description": "Prompt context for performing automated security checks across Ring and Fire TV overlays.",
+        "arguments": []
+    }
+]
+
+# 3. MCP Resources Schema (2025-11-25 Spec)
+AVAILABLE_RESOURCES = [
+    {
+        "uri": "ambient://device_logs",
+        "name": "Ambient Device State Log",
+        "description": "Real-time stream log of connected Ring, Fire TV, and Wearable AI event telemetry.",
+        "mimeType": "application/json"
+    },
+    {
+        "uri": "ambient://session_summary",
+        "name": "Alexa+ Conversation Session Memory",
+        "description": "Active session memory store maintaining conversational history across voice and visual surfaces.",
+        "mimeType": "application/json"
     }
 ]
 
@@ -206,20 +250,27 @@ async def handle_mcp_rpc(request: Request):
     method = body.get("method")
     req_id = body.get("id", 1)
 
+    # Handshake Handlers
     if method == "initialize":
         return {
             "jsonrpc": "2.0",
             "id": req_id,
             "result": {
                 "protocolVersion": "2025-11-25",
-                "capabilities": {"tools": {"listChanged": False}, "logging": {}},
-                "serverInfo": {"name": "alexa-plus-aws-bedrock-mcp", "version": "1.2.0"}
+                "capabilities": {
+                    "tools": {"listChanged": False},
+                    "prompts": {"listChanged": False},
+                    "resources": {"subscribe": False, "listChanged": False},
+                    "logging": {}
+                },
+                "serverInfo": {"name": "alexa-plus-aws-bedrock-mcp", "version": "1.3.0"}
             }
         }
 
     elif method == "notifications/initialized":
         return {"jsonrpc": "2.0", "result": {}}
 
+    # Tools Handlers
     elif method == "tools/list":
         return {"jsonrpc": "2.0", "id": req_id, "result": {"tools": AVAILABLE_TOOLS}}
 
@@ -252,6 +303,47 @@ async def handle_mcp_rpc(request: Request):
 
         else:
             raise HTTPException(status_code=404, detail=f"Tool '{tool_name}' not found")
+
+    # Prompts Handlers (MCP 2025-11-25)
+    elif method == "prompts/list":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"prompts": AVAILABLE_PROMPTS}}
+
+    elif method == "prompts/get":
+        params = body.get("params", {})
+        prompt_name = params.get("name")
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "description": f"Loaded template for {prompt_name}",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": {"type": "text", "text": f"System context active for prompt template '{prompt_name}'."}
+                    }
+                ]
+            }
+        }
+
+    # Resources Handlers (MCP 2025-11-25)
+    elif method == "resources/list":
+        return {"jsonrpc": "2.0", "id": req_id, "result": {"resources": AVAILABLE_RESOURCES}}
+
+    elif method == "resources/read":
+        params = body.get("params", {})
+        uri = params.get("uri")
+        if uri == "ambient://device_logs":
+            content = json.dumps({"ring_event": "motion", "tv_state": "playing", "timestamp": "2026-10-23T03:40:00Z"})
+        else:
+            content = json.dumps(SESSION_STORE)
+        
+        return {
+            "jsonrpc": "2.0",
+            "id": req_id,
+            "result": {
+                "contents": [{"uri": uri, "mimeType": "application/json", "text": content}]
+            }
+        }
 
     else:
         return {"jsonrpc": "2.0", "id": req_id, "error": {"code": -32601, "message": f"Method '{method}' unsupported"}}

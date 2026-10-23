@@ -26,15 +26,24 @@ def test_mcp_list_tools():
     tools = response.json()["result"]["tools"]
     assert len(tools) == 3
 
-def test_mcp_call_bedrock_tool():
+def test_mcp_list_prompts():
     response = client.post("/mcp/rpc", json={
         "jsonrpc": "2.0",
         "id": 3,
-        "method": "tools/call",
-        "params": {
-            "name": "query_bedrock_agent",
-            "arguments": {"prompt": "Test query", "session_id": "test_1"}
-        }
+        "method": "prompts/list",
+        "params": {}
     })
     assert response.status_code == 200
-    assert "result" in response.json()
+    prompts = response.json()["result"]["prompts"]
+    assert len(prompts) == 2
+
+def test_mcp_list_resources():
+    response = client.post("/mcp/rpc", json={
+        "jsonrpc": "2.0",
+        "id": 4,
+        "method": "resources/list",
+        "params": {}
+    })
+    assert response.status_code == 200
+    resources = response.json()["result"]["resources"]
+    assert len(resources) == 2
